@@ -1,10 +1,10 @@
 clear all
 close all
 
-for St = 1:10
+for St = 1:0.5:2
     S = St;
-    H = 5;
-    l = 5;
+    H = 0.75;
+    l = 0.352;
     Rmin = l/tan(50*pi/180);
     
     k = (S*(H-2*Rmin)+sqrt(4*Rmin^2*(S^2+H^2)-16*Rmin^3*H))/(S^2-4*Rmin^2);
