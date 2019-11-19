@@ -1,8 +1,8 @@
 clear all
 close all
 
-for St = 1:0.5:2
-    S = St;
+% for St = 1:0.5:2
+    S = 1;
     H = 0.75;
     l = 0.352;
     Rmin = l/tan(50*pi/180);
@@ -26,5 +26,5 @@ for St = 1:0.5:2
     plot(f(:,1),f(:,2),'.k')
     plot(xS,yS,'k')
     axis equal
-end
+% end
 
