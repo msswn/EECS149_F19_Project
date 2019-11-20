@@ -25,6 +25,7 @@
 #include "kobukiSensorTypes.h"
 #include "kobukiUtilities.h"
 #include "mpu9250.h"
+#include "virtual_timer.h"
 
 // I2C manager
 NRF_TWI_MNGR_DEF(twi_mngr_instance, 5, 0);
@@ -36,12 +37,19 @@ typedef enum {
   C2
 } robot_state_t;
 
+int16_t vel = 100;
+float lastDist;
+
 static float measure_distance_reverse(uint16_t current_encoder, uint16_t previous_encoder){
 	if(current_encoder > previous_encoder){
 		previous_encoder += 2^16;
 	} 
 	const float CONVERSION = 0.00008529;
 	float distance = CONVERSION*(previous_encoder - current_encoder);
+  if (distance-lastDist < vel/dt*1.25) {
+    distance = lastDist;
+  }
+  lastDist = distance;
 	return distance;
 }
 
@@ -82,6 +90,9 @@ int main(void) {
   nrf_gpio_pin_dir_set(24, NRF_GPIO_PIN_DIR_OUTPUT);
   nrf_gpio_pin_dir_set(25, NRF_GPIO_PIN_DIR_OUTPUT);
 
+  // initialize timer library
+  virtual_timer_init();
+
   // initialize display
   nrf_drv_spi_t spi_instance = NRF_DRV_SPI_INSTANCE(1);
   nrf_drv_spi_config_t spi_config = {
@@ -118,9 +129,29 @@ int main(void) {
   // configure initial state
   robot_state_t state = OFF;
   KobukiSensors_t sensors = {0};
-  uint16_t start_encoder;
-  float distance = 0;
-  struct timeval getTime, start;
+
+  // Control parameters
+  float KL = 1;
+  float KR = 1;
+  float KdL = 0.5;
+  float KdR = 0.5;
+  float Kw = 1;
+  float Ki = 1;
+
+  int16_t velL;
+  int16_t velR;
+  uint16_t start_encoder_L;
+  uint16_t start_encoder_R;
+  uint32_t timer_start;
+  float curr_time;
+  float last_time;
+  float lasteL;
+  float lasteR;
+  float derivL;
+  float derivR;
+  int loop;
+  float intErrorL;
+  float intErrorR;
   
   // current Kobuki position
   float S = 0.6;
@@ -130,8 +161,9 @@ int main(void) {
   float l = 0.352;
   float w = 0.230;
   float Rmin = l/tan(50*M_PI/180);
-  // Outer to inner velocity ratio
-  float vRatio = (Rmin+w/2)/(Rmin-w/2);
+  // Outer and inner velocity ratio
+  float velO = vel*(Rmin+w/2)/Rmin;
+  float velI = vel*(Rmin-w/2)/Rmin;
 
   // Path calculation
   float k = (S*(H-2*Rmin)+sqrt(4*pow(Rmin,2)*(pow(S,2)+pow(H,2))-16*pow(Rmin,3)*H))/(pow(S,2)-4*pow(Rmin,2));
@@ -147,6 +179,11 @@ int main(void) {
   float magS = norm(del);
   float magC2 = fabs(Rmin*th2);
   printf("k: %f, m: %f, f1:[%f,%f], f2:[%f,%f] \nmagC1:%f, magS:%f, magC2:%f \n",k,m,f1[0],f1[1],f2[0],f2[1],magC1,magS,magC2);
+
+  // Deadlines to reach waypoint
+  float t1 = magC1/vel;
+  float t2 = S/vel;
+  float t3 = magC2/vel;
 
   // loop forever, running state machine
   while (1) {
@@ -164,15 +201,23 @@ int main(void) {
         // transition logic
         if (is_button_pressed(&sensors)) {
           state = C1;
-          distance = 0;
-          start_encoder = sensors.leftWheelEncoder;
-          gettimeofday(&start, NULL);
+          start_encoder_L = sensors.leftWheelEncoder;
+          start_encoder_R = sensors.rightWheelEncoder;
+          timer_start = read_timer();
+          loop = 0;
+          derivL = 0;
+          derivR = 0;
+          intErrorL = 0;
+          intErrorR = 0;
+          lasteL = 0;
+          lasteR = 0;
+          last_time = 0;
+          lastDist = 0;
         } else {
           // perform state-specific actions here
           display_write("OFF", DISPLAY_LINE_0);
           state = OFF;
           kobukiDriveDirect(0,0);
-          state = OFF;
         }
         break; // each case needs to end with break!
       }
@@ -181,24 +226,56 @@ int main(void) {
         // transition logic
         if (is_button_pressed(&sensors)) {
           state = OFF;
-        } else if (distance >= magC1) {
+        } else if (curr_time >= t1) {
         	state = SEG;
         	distance = 0;
         	start_encoder = sensors.leftWheelEncoder;
         } else {
           // perform state-specific actions here
-          display_write("C1", DISPLAY_LINE_0);
-          distance = measure_distance_reverse(sensors.leftWheelEncoder, start_encoder)*Rmin/(Rmin-w/2);
-          gettimeofday(&getTime,NULL);
-          long time = (getTime.tv_sec - start.tv_sec) + 1000000 + getTime.tv_usec - start.tv_usec;
-          printf("%l seconds elapsed\n",time);
-          char buf[16];
-          // snprintf(buf,16,"%f",distance);
-          // display_write(buf,DISPLAY_LINE_1);
-          snprintf(buf,16,"%l",time);
-          display_write(buf,DISPLAY_LINE_1);
-          kobukiDriveDirect(-100,-100/vRatio);
+          curr_time = (float) (read_timer()-start_time)/1000000;
+          float dt = curr_time-last_time;
+
+          // Compute desired distances
+          float distDL = velO*curr_time;
+          float distDR = velI*curr_time;
+
+          // Compute left and right actual distance
+          float distL = measure_distance(sensors.leftWheelEncoder, start_encoder_L,dt);
+          float distR = measure_distance(sensors.rightWheelEncoder, start_encoder_R,dt);
+
+          // COmpute distance error
+          float eL = distDL-distL;
+          float eR = distDR-distR;
+
+          // Compute derivative term
+          float curr_derivative_L = (eL-lasteL)/dt;
+          float curr_derivative_R = (eR-lasteR)/dt;
+          derivL += curr_derivative_L;
+          derivR += curr_derivative_R;
+          float edL = derivL/loop;
+          float edR = derivR/loop;
+
+          // Compute integral term
+          intErrorL = Kw*intErrorL + eL;
+          intErrorR = Kw*intErrorR + eR;
+
+          // Update terms
+          lasteL = eL;
+          lasteR = eR;
+          last_time = curr_time;
+          
+           // Compute input
+          velL = (int16_t) velO+KL*eL+KdL*edL+Ki*intErrorL;
+          velR = (int16_t) velI+KR*eR+KdR*edR+Ki*intErrorR;
+          char buf1[16];
+          char buf2[16];
+          snprintf(buf1,16,"L:%.1f,R:%.1f",eL,eR);
+          snprintf(buf2,16,"DL:%.1f","DR:%.1f",distDL,distDR);
+          display_write(buf1,DISPLAY_LINE_0);
+          display_write(buf2,DISPLAY_LINE_1);
+          kobukiDriveDirect((int16_t) velL,(int16_t) velR);
           state = C1;
+          loop += 1;
         }
         break; // each case needs to end with break!
       }
@@ -208,7 +285,7 @@ int main(void) {
         // transition logic
         if (is_button_pressed(&sensors)) {
           state = OFF;
-        } else if (distance >= magS) {
+        } else if (curr_time >= t2) {
         	state = C2;
         	distance = 0;
         	start_encoder = sensors.rightWheelEncoder;
@@ -219,7 +296,7 @@ int main(void) {
           char buf[16];
           snprintf(buf,16,"%f",distance);
           display_write(buf,DISPLAY_LINE_1);
-          kobukiDriveDirect(-100,-100);
+          kobukiDriveDirect(-vel,-vel);
           state = SEG;
         }
         break; // each case needs to end with break!
@@ -229,7 +306,7 @@ int main(void) {
         // transition logic
         if (is_button_pressed(&sensors)) {
           state = OFF;
-        } else if (distance >= magC2) {
+        } else if (curr_time >= t3) {
         	state = OFF;
         	distance = 0;
         } else {
@@ -239,7 +316,7 @@ int main(void) {
           char buf[16];
           snprintf(buf,16,"%f",distance);
           display_write(buf,DISPLAY_LINE_1);
-          kobukiDriveDirect(-100/vRatio,-100);
+          kobukiDriveDirect(-velI,-velO);
           state = C2;
         }
         break; // each case needs to end with break!
