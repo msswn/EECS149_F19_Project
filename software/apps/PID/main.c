@@ -35,13 +35,20 @@ typedef enum {
   DRIVING,
 } robot_state_t;
 
-static float measure_distance(uint16_t current_encoder, uint16_t previous_encoder){
+int16_t vel = 100;
+float lastDist;
+
+static float measure_distance(uint16_t current_encoder, uint16_t previous_encoder, float dt){
 
   if(current_encoder < previous_encoder){
     current_encoder += 2^16;
   } 
-  const float CONVERSION = 0.00008529;
+  const float CONVERSION = 0.08529;
   float distance = CONVERSION*(current_encoder - previous_encoder);
+  if (distance-lastDist > vel/dt*1.25) {
+    distance = lastDist;
+  }
+  lastDist = distance;
   return distance;
 }
 
@@ -58,6 +65,9 @@ int main(void) {
   nrf_gpio_pin_dir_set(23, NRF_GPIO_PIN_DIR_OUTPUT);
   nrf_gpio_pin_dir_set(24, NRF_GPIO_PIN_DIR_OUTPUT);
   nrf_gpio_pin_dir_set(25, NRF_GPIO_PIN_DIR_OUTPUT);
+
+  // initialize timer
+  virtual_timer_init();
 
   // initialize display
   nrf_drv_spi_t spi_instance = NRF_DRV_SPI_INSTANCE(1);
@@ -96,17 +106,28 @@ int main(void) {
   // configure initial state
   robot_state_t state = OFF;
   KobukiSensors_t sensors = {0};
-  float distL = 0;
-  float distR = 0;
-  float distD = 0;
-  float K = 2;
-  // float KR = 10;
-  int16_t vel;
+
+  float KL = 1;
+  float KR = 1;
+  float KdL = 0.5;
+  float KdR = 0.5;
+  float Kw = 1;
+  float Ki = 1;
+
   int16_t velL;
   int16_t velR;
   uint16_t start_encoder_L;
   uint16_t start_encoder_R;
-  clock_t start;
+  uint32_t timer_start;
+  float curr_time;
+  float last_time;
+  float lasteL;
+  float lasteR;
+  float derivL;
+  float derivR;
+  int loop;
+  float intErrorL;
+  float intErrorR;
 
   // loop forever, running state machine
   while (1) {
@@ -126,9 +147,16 @@ int main(void) {
           state = DRIVING;
           start_encoder_L = sensors.leftWheelEncoder;
           start_encoder_R = sensors.rightWheelEncoder;
-          distL = 0;
-          distR = 0;
-          start = clock();
+          timer_start = read_timer();
+          loop = 0;
+          derivL = 0;
+          derivR = 0;
+          intErrorL = 0;
+          intErrorR = 0;
+          lasteL = 0;
+          lasteR = 0;
+          last_time = 0;
+          lastDist = 0;
         } else {
           // perform state-specific actions here
           display_write("OFF", DISPLAY_LINE_0);
@@ -144,25 +172,48 @@ int main(void) {
         if (is_button_pressed(&sensors)) {
           state = OFF;
         } else {
-          // perform state-specific actions here
-          vel = 100;
-          // float time = (clock()-start)/CLOCKS_PER_SEC;
-          // distD = vel*time;
-          distL = measure_distance(sensors.leftWheelEncoder, start_encoder_L);
-          distR = measure_distance(sensors.rightWheelEncoder, start_encoder_R);
-          float e = 100*(distL-distR);
-          // float eR = distD-distR;
+          // Compute current time and change in time
+          curr_time = (float) (read_timer()-timer_start)/1000000;
+          float dt = curr_time-last_time;
+          
+          // Compute desired distance
+          float distD = vel*curr_time;
+          // Compute left and right actual distance
+          float distL = measure_distance(sensors.leftWheelEncoder, start_encoder_L,dt);
+          float distR = measure_distance(sensors.rightWheelEncoder, start_encoder_R,dt);
+          // Compute distance errors
+          float eL = distD-distL;
+          float eR = distD-distR;
 
-          velL = (int16_t) vel-K*e;
-          velR = (int16_t) vel+K*e;
+          // Compute derivative term
+          float curr_derivative_L = (eL-lasteL)/dt;
+          float curr_derivative_R = (eR-lasteR)/dt;
+          derivL += curr_derivative_L;
+          derivR += curr_derivative_R;
+          float edL = derivL/loop;
+          float edR = derivR/loop;
+
+          // Compute integral term
+          intErrorL = Kw*intErrorL + eL;
+          intErrorR = Kw*intErrorR + eR;
+
+          // Update terms
+          lasteL = eL;
+          lasteR = eR;
+          last_time = curr_time;
+          
+          // Compute input
+          velL = (int16_t) vel+KL*eL+KdL*edL+Ki*intErrorL;
+          velR = (int16_t) vel+KR*eR+KdR*edR+Ki*intErrorR;
           char buf1[16];
           char buf2[16];
-          snprintf(buf1,16,"L:%i,e:%f",velL,e);
-          snprintf(buf2,16,"R:%i,e:%f",velR,e);
+          snprintf(buf1,16,"L:%.1f,R:%.1f",eL,eR);
+          snprintf(buf2,16,"distD:%.1f",distD);
           display_write(buf1,DISPLAY_LINE_0);
           display_write(buf2,DISPLAY_LINE_1);
           kobukiDriveDirect((int16_t) velL,(int16_t) velR);
           state = DRIVING;
+          loop += 1;
         }
         break; // each case needs to end with break!
       }
