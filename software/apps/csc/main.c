@@ -40,13 +40,13 @@ typedef enum {
 int16_t vel = 100;
 float lastDist;
 
-static float measure_distance_reverse(uint16_t current_encoder, uint16_t previous_encoder){
+static float measure_distance_reverse(uint16_t current_encoder, uint16_t previous_encoder,float dt){
 	if(current_encoder > previous_encoder){
 		previous_encoder += 2^16;
 	} 
-	const float CONVERSION = 0.00008529;
-	float distance = CONVERSION*(previous_encoder - current_encoder);
-  if (distance-lastDist < vel/dt*1.25) {
+	const float CONVERSION = 0.08529;
+	float distance = fabs(CONVERSION*(previous_encoder - current_encoder));
+  if (distance-lastDist > vel/dt*1.25) {
     distance = lastDist;
   }
   lastDist = distance;
@@ -133,10 +133,10 @@ int main(void) {
   // Control parameters
   float KL = 1;
   float KR = 1;
-  float KdL = 0.5;
-  float KdR = 0.5;
+  float KdL = 0.25;
+  float KdR = 0.25;
   float Kw = 1;
-  float Ki = 1;
+  float Ki = 0.5;
 
   int16_t velL;
   int16_t velR;
@@ -181,9 +181,10 @@ int main(void) {
   printf("k: %f, m: %f, f1:[%f,%f], f2:[%f,%f] \nmagC1:%f, magS:%f, magC2:%f \n",k,m,f1[0],f1[1],f2[0],f2[1],magC1,magS,magC2);
 
   // Deadlines to reach waypoint
-  float t1 = magC1/vel;
-  float t2 = S/vel;
-  float t3 = magC2/vel;
+  float t1 = magC1*1000/vel;
+  float t2 = S*1000/vel;
+  float t3 = magC2*1000/vel;
+  printf("t1: %f,t2: %f, t3: %f",t1,t2,t3);
 
   // loop forever, running state machine
   while (1) {
@@ -216,34 +217,44 @@ int main(void) {
         } else {
           // perform state-specific actions here
           display_write("OFF", DISPLAY_LINE_0);
-          state = OFF;
+          display_write(" ",DISPLAY_LINE_1);
           kobukiDriveDirect(0,0);
+          state = OFF;
         }
         break; // each case needs to end with break!
       }
 
       case C1: {
         // transition logic
-        if (is_button_pressed(&sensors)) {
+         if (is_button_pressed(&sensors)) {
           state = OFF;
         } else if (curr_time >= t1) {
-        	state = SEG;
-        	distance = 0;
-        	start_encoder = sensors.leftWheelEncoder;
+          state = SEG;
+          start_encoder_L = sensors.leftWheelEncoder;
+          start_encoder_R = sensors.rightWheelEncoder;
+          timer_start = read_timer();
+          loop = 0;
+          derivL = 0;
+          derivR = 0;
+          intErrorL = 0;
+          intErrorR = 0;
+          lasteL = 0;
+          lasteR = 0;
+          last_time = 0;
+          lastDist = 0;
+          curr_time = 0;
         } else {
-          // perform state-specific actions here
-          curr_time = (float) (read_timer()-start_time)/1000000;
+          // Compute current time and change in time
+          curr_time = (float) (read_timer()-timer_start)/1000000;
           float dt = curr_time-last_time;
-
-          // Compute desired distances
+          
+          // Compute desired distance
           float distDL = velO*curr_time;
           float distDR = velI*curr_time;
-
           // Compute left and right actual distance
-          float distL = measure_distance(sensors.leftWheelEncoder, start_encoder_L,dt);
-          float distR = measure_distance(sensors.rightWheelEncoder, start_encoder_R,dt);
-
-          // COmpute distance error
+          float distL = measure_distance_reverse(sensors.leftWheelEncoder, start_encoder_L,dt);
+          float distR = measure_distance_reverse(sensors.rightWheelEncoder, start_encoder_R,dt);
+          // Compute distance errors
           float eL = distDL-distL;
           float eR = distDR-distR;
 
@@ -264,14 +275,18 @@ int main(void) {
           lasteR = eR;
           last_time = curr_time;
           
-           // Compute input
-          velL = (int16_t) velO+KL*eL+KdL*edL+Ki*intErrorL;
-          velR = (int16_t) velI+KR*eR+KdR*edR+Ki*intErrorR;
+          // Compute input
+          velL = (int16_t) -velO-KL*eL-KdL*edL-Ki*intErrorL;
+          velR = (int16_t) -velI-KR*eR-KdR*edR-Ki*intErrorR;
           char buf1[16];
-          char buf2[16];
+          // char buf2[16];
           snprintf(buf1,16,"L:%.1f,R:%.1f",eL,eR);
-          snprintf(buf2,16,"DL:%.1f","DR:%.1f",distDL,distDR);
+          // snprintf(buf2,16,"distDL:%.1f",distDL);
           display_write(buf1,DISPLAY_LINE_0);
+          // display_write(buf2,DISPLAY_LINE_1);
+          // display_write("C1", DISPLAY_LINE_0);
+          char buf2[16];
+          snprintf(buf2,16,"Time: %f s",curr_time);
           display_write(buf2,DISPLAY_LINE_1);
           kobukiDriveDirect((int16_t) velL,(int16_t) velR);
           state = C1;
@@ -280,24 +295,73 @@ int main(void) {
         break; // each case needs to end with break!
       }
 
-      // add other cases here
       case SEG: {
         // transition logic
         if (is_button_pressed(&sensors)) {
           state = OFF;
         } else if (curr_time >= t2) {
-        	state = C2;
-        	distance = 0;
-        	start_encoder = sensors.rightWheelEncoder;
+          state = C2;
+          start_encoder_L = sensors.leftWheelEncoder;
+          start_encoder_R = sensors.rightWheelEncoder;
+          timer_start = read_timer();
+          loop = 0;
+          derivL = 0;
+          derivR = 0;
+          intErrorL = 0;
+          intErrorR = 0;
+          lasteL = 0;
+          lasteR = 0;
+          last_time = 0;
+          lastDist = 0;
+          curr_time = 0;
         } else {
-          // perform state-specific actions here
-          display_write("SEG", DISPLAY_LINE_0);
-          distance = measure_distance_reverse(sensors.leftWheelEncoder, start_encoder);
-          char buf[16];
-          snprintf(buf,16,"%f",distance);
-          display_write(buf,DISPLAY_LINE_1);
-          kobukiDriveDirect(-vel,-vel);
+          // Compute current time and change in time
+          curr_time = (float) (read_timer()-timer_start)/1000000;
+          float dt = curr_time-last_time;
+          
+          // Compute desired distance
+          float distDL = vel*curr_time;
+          float distDR = vel*curr_time;
+          // Compute left and right actual distance
+          float distL = measure_distance_reverse(sensors.leftWheelEncoder, start_encoder_L,dt);
+          float distR = measure_distance_reverse(sensors.rightWheelEncoder, start_encoder_R,dt);
+          // Compute distance errors
+          float eL = distDL-distL;
+          float eR = distDR-distR;
+
+          // Compute derivative term
+          float curr_derivative_L = (eL-lasteL)/dt;
+          float curr_derivative_R = (eR-lasteR)/dt;
+          derivL += curr_derivative_L;
+          derivR += curr_derivative_R;
+          float edL = derivL/loop;
+          float edR = derivR/loop;
+
+          // Compute integral term
+          intErrorL = Kw*intErrorL + eL;
+          intErrorR = Kw*intErrorR + eR;
+
+          // Update terms
+          lasteL = eL;
+          lasteR = eR;
+          last_time = curr_time;
+          
+          // Compute input
+          velL = (int16_t) -vel-KL*eL-KdL*edL-Ki*intErrorL;
+          velR = (int16_t) -vel-KR*eR-KdR*edR-Ki*intErrorR;
+          char buf1[16];
+          // char buf2[16];
+          snprintf(buf1,16,"L:%.1f,R:%.1f",eL,eR);
+          // snprintf(buf2,16,"distDL:%.1f",distDL);
+          display_write(buf1,DISPLAY_LINE_0);
+          // display_write(buf2,DISPLAY_LINE_1);
+          // display_write("SEG", DISPLAY_LINE_0);
+          char buf2[16];
+          snprintf(buf2,16,"Time: %f s",curr_time);
+          display_write(buf2,DISPLAY_LINE_1);
+          kobukiDriveDirect((int16_t) velL,(int16_t) velR);
           state = SEG;
+          loop += 1;
         }
         break; // each case needs to end with break!
       }
@@ -307,20 +371,60 @@ int main(void) {
         if (is_button_pressed(&sensors)) {
           state = OFF;
         } else if (curr_time >= t3) {
-        	state = OFF;
-        	distance = 0;
+          state = OFF;
         } else {
-          // perform state-specific actions here
-          display_write("C2", DISPLAY_LINE_0);
-          distance = measure_distance_reverse(sensors.rightWheelEncoder, start_encoder)*Rmin/(Rmin-w/2);
-          char buf[16];
-          snprintf(buf,16,"%f",distance);
-          display_write(buf,DISPLAY_LINE_1);
-          kobukiDriveDirect(-velI,-velO);
+          // Compute current time and change in time
+          curr_time = (float) (read_timer()-timer_start)/1000000;
+          float dt = curr_time-last_time;
+          
+          // Compute desired distance
+          float distDL = velI*curr_time;
+          float distDR = velO*curr_time;
+          // Compute left and right actual distance
+          float distL = measure_distance_reverse(sensors.leftWheelEncoder, start_encoder_L,dt);
+          float distR = measure_distance_reverse(sensors.rightWheelEncoder, start_encoder_R,dt);
+          // Compute distance errors
+          float eL = distDL-distL;
+          float eR = distDR-distR;
+
+          // Compute derivative term
+          float curr_derivative_L = (eL-lasteL)/dt;
+          float curr_derivative_R = (eR-lasteR)/dt;
+          derivL += curr_derivative_L;
+          derivR += curr_derivative_R;
+          float edL = derivL/loop;
+          float edR = derivR/loop;
+
+          // Compute integral term
+          intErrorL = Kw*intErrorL + eL;
+          intErrorR = Kw*intErrorR + eR;
+
+          // Update terms
+          lasteL = eL;
+          lasteR = eR;
+          last_time = curr_time;
+          
+          // Compute input
+          velL = (int16_t) -velI-KL*eL-KdL*edL-Ki*intErrorL;
+          velR = (int16_t) -velO-KR*eR-KdR*edR-Ki*intErrorR;
+          char buf1[16];
+          // char buf2[16];
+          snprintf(buf1,16,"L:%.1f,R:%.1f",eL,eR);
+          // snprintf(buf2,16,"distDL:%.1f",distDL);
+          display_write(buf1,DISPLAY_LINE_0);
+          // display_write(buf2,DISPLAY_LINE_1);
+          // display_write("C2", DISPLAY_LINE_0);
+          char buf2[16];
+          snprintf(buf2,16,"Time: %f s",curr_time);
+          display_write(buf2,DISPLAY_LINE_1);
+          kobukiDriveDirect((int16_t) velL,(int16_t) velR);
           state = C2;
+          loop += 1;
         }
         break; // each case needs to end with break!
       }
+
+      // add other cases here
 
     }
   }
