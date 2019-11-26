@@ -15,7 +15,6 @@ th = ths:(the-ths)/50:the;
 xunit = r * cos(th) + xc;
 yunit = r * sin(th) + yc;
 h = plot(xunit, yunit);
-hold off
 axis equal
 
 end
