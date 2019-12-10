@@ -53,20 +53,20 @@ float get_distance(uint8_t pin) {
 	gpio_config(pin,INPUT);
 	uint32_t duration;
 	duration = pulseIn(pin);
-	printf("Duration: %i us ",duration);
 	float RangeInCentimeters;
-	RangeInCentimeters = duration/1000000.0f*340000.0f/2.0f;
+	RangeInCentimeters = duration/29.0f/2.0f;
 	return RangeInCentimeters;
 }
 
-int main(void) {
-  virtual_timer_init();
-  // loop forever
-  while (1) {
-    nrf_delay_ms(200);
-    float dist = get_distance(19);
-    printf("Distance: %f cm\n",dist);
-    // printf("Pin state: %i\n",gpio_read(4));
-  }
+float distFront() {
+	return get_distance(19);
+}
+
+float distRight() {
+	return get_distance(4);
+}
+
+float distBack() {
+	return get_distance(2);
 }
 
