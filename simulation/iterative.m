@@ -6,6 +6,16 @@ l = 0.352;
 Rmin = l/tan(50*pi/180);
 d1 = l/2+0.01;
 
+% Initialize waypoints
+f1 = [0,0];
+f2 = [0,0];
+f4 = [0,0];
+f5 = [0,0];
+f6 = [0,0];
+f7 = [0,0];
+f8 = [0,0];
+f9 = [0,0];
+
 % Parking spot parameters
 spotLength = l+2.4*d1;
 spotWidth = l*1.25;
@@ -139,3 +149,5 @@ else
     plot(f9(1),f9(2),'.','MarkerSize',20)
     circleFull(f9(1),f9(2),l/2);
 end
+
+[f1; f2; f4; f5; f6; f7; f8; f9]
