@@ -44,8 +44,23 @@ typedef enum
   S2
 } robot_state_t;
 
-int16_t vel = 100;
+int16_t vel = 75;
 float lastDist;
+
+static float measure_distance(uint16_t current_encoder, uint16_t previous_encoder, float dt)
+{
+  if (current_encoder < previous_encoder)
+  {
+    current_encoder += 2 ^ 16;
+  }
+  const float CONVERSION = 0.08529;
+  float distance = CONVERSION * (current_encoder - previous_encoder);
+  if (distance - lastDist > vel / dt * 1.25)
+  {
+    distance = lastDist;
+  }
+  return distance;
+}
 
 static float measure_distance_reverse(uint16_t current_encoder, uint16_t previous_encoder, float dt)
 {
@@ -146,8 +161,8 @@ int main(void)
   // Control parameters
   float KL = 1;
   float KR = 1;
-  float KdL = 0.25;
-  float KdR = 0.25;
+  float KdL = 0.5;
+  float KdR = 0.5;
   float Kw = 1;
   float Ki = 0.5;
 
@@ -196,7 +211,7 @@ int main(void)
   float velI = vel * (Rmin - w / 2) / Rmin;
 
   // parking spot parameters
-  float spotLength = l + 3 * d1;
+  float spotLength = l + 2.5 * d1;
   float spotWidth = l * 1.25;
   float spotBack = -spotLength / 2.0f;
   float spotFront = spotLength / 2.0f;
@@ -248,7 +263,7 @@ int main(void)
     float cy = Rmin * dSn[1] + f2[1];
     f5[0] = cx - (f2[0] - cx);
     f5[1] = cy + f2[1] - cy;
-    float th5 = theta(cx, cy, Rmin, f4[0], f4[1], f5[0], f5[1]);
+    float th5 = theta(cx, cy, Rmin, f5[0], f5[1], f4[0], f4[1]);
     magC3 = Rmin * th5;
   }
   else
@@ -297,7 +312,7 @@ int main(void)
     magC5 = Rmin * th7;
     f8[0] = f7[0] - sqrt(pow(Rmin, 2) - pow(Rmin - f7[1], 2));
     f8[1] = 0;
-    float th8 = theta(f8[0], f8[1] + Rmin, Rmin, f7[0], f7[1], f8[0], f8[1]);
+    float th8 = theta(f8[0], f8[1] + Rmin, Rmin, f8[0], f8[1], f7[0], f7[1]);
     magC6 = Rmin * th8;
     f9[0] = spotCenter[0];
     f9[1] = spotCenter[1];
@@ -331,7 +346,8 @@ int main(void)
   float t6 = magC5 * 1000 / vel;
   float t7 = magC6 * 1000 / vel;
   float t8 = magS2 * 1000 / vel;
-  // printf("t1: %f,t2: %f, t3: %f", t1, t2, t3);
+  printf("magC1: %f,magS: %f, magC2: %f, magC3: %f, magC4: %f, magC5: %f, magC6: %f, magS2: %f\n", magC1, magS, magC2, magC3, magC4, magC5, magC6, magS2);
+  printf("t1: %f,t2: %f, t3: %f, t4: %f, t5: %f, t6: %f, t7: %f, t8: %f\n", t1, t2, t3, t4, t5, t6, t7, t8);
 
   // loop forever, running state machine
   while (1)
@@ -376,7 +392,6 @@ int main(void)
       }
       break; // each case needs to end with break!
     }
-
     case C1:
     {
       // transition logic
@@ -511,8 +526,8 @@ int main(void)
         last_time = curr_time;
 
         // Compute input
-        velL = (int16_t)-velO - KL * eL - KdL * edL - Ki * intErrorL;
-        velR = (int16_t)-velI - KR * eR - KdR * edR - Ki * intErrorR;
+        velL = (int16_t)-vel - KL * eL - KdL * edL - Ki * intErrorL;
+        velR = (int16_t)-vel - KR * eR - KdR * edR - Ki * intErrorR;
         char buf1[16];
         // char buf2[16];
         snprintf(buf1, 16, "L:%.1f,R:%.1f", eL, eR);
@@ -626,8 +641,8 @@ int main(void)
         float distDL = velO * curr_time;
         float distDR = velI * curr_time;
         // Compute left and right actual distance
-        float distL = measure_distance_reverse(sensors.leftWheelEncoder, start_encoder_L, dt);
-        float distR = measure_distance_reverse(sensors.rightWheelEncoder, start_encoder_R, dt);
+        float distL = measure_distance(sensors.leftWheelEncoder, start_encoder_L, dt);
+        float distR = measure_distance(sensors.rightWheelEncoder, start_encoder_R, dt);
         // Compute distance errors
         float eL = distDL - distL;
         float eR = distDR - distR;
@@ -650,8 +665,8 @@ int main(void)
         last_time = curr_time;
 
         // Compute input
-        velL = (int16_t)-velO - KL * eL - KdL * edL - Ki * intErrorL;
-        velR = (int16_t)-velI - KR * eR - KdR * edR - Ki * intErrorR;
+        velL = (int16_t)velO - KL * eL - KdL * edL - Ki * intErrorL;
+        velR = (int16_t)velI - KR * eR - KdR * edR - Ki * intErrorR;
         char buf1[16];
         // char buf2[16];
         snprintf(buf1, 16, "L:%.1f,R:%.1f", eL, eR);
@@ -702,8 +717,8 @@ int main(void)
         float distDL = velI * curr_time;
         float distDR = velO * curr_time;
         // Compute left and right actual distance
-        float distL = measure_distance_reverse(sensors.leftWheelEncoder, start_encoder_L, dt);
-        float distR = measure_distance_reverse(sensors.rightWheelEncoder, start_encoder_R, dt);
+        float distL = measure_distance(sensors.leftWheelEncoder, start_encoder_L, dt);
+        float distR = measure_distance(sensors.rightWheelEncoder, start_encoder_R, dt);
         // Compute distance errors
         float eL = distDL - distL;
         float eR = distDR - distR;
@@ -726,8 +741,8 @@ int main(void)
         last_time = curr_time;
 
         // Compute input
-        velL = (int16_t)-velO - KL * eL - KdL * edL - Ki * intErrorL;
-        velR = (int16_t)-velI - KR * eR - KdR * edR - Ki * intErrorR;
+        velL = (int16_t)velI - KL * eL - KdL * edL - Ki * intErrorL;
+        velR = (int16_t)velO - KR * eR - KdR * edR - Ki * intErrorR;
         char buf1[16];
         // char buf2[16];
         snprintf(buf1, 16, "L:%.1f,R:%.1f", eL, eR);
@@ -878,8 +893,8 @@ int main(void)
         last_time = curr_time;
 
         // Compute input
-        velL = (int16_t)-velO - KL * eL - KdL * edL - Ki * intErrorL;
-        velR = (int16_t)-velI - KR * eR - KdR * edR - Ki * intErrorR;
+        velL = (int16_t)-velI - KL * eL - KdL * edL - Ki * intErrorL;
+        velR = (int16_t)-velO - KR * eR - KdR * edR - Ki * intErrorR;
         char buf1[16];
         // char buf2[16];
         snprintf(buf1, 16, "L:%.1f,R:%.1f", eL, eR);
@@ -954,8 +969,8 @@ int main(void)
         last_time = curr_time;
 
         // Compute input
-        velL = (int16_t)-velO - KL * eL - KdL * edL - Ki * intErrorL;
-        velR = (int16_t)-velI - KR * eR - KdR * edR - Ki * intErrorR;
+        velL = (int16_t)-vel - KL * eL - KdL * edL - Ki * intErrorL;
+        velR = (int16_t)-vel - KR * eR - KdR * edR - Ki * intErrorR;
         char buf1[16];
         // char buf2[16];
         snprintf(buf1, 16, "L:%.1f,R:%.1f", eL, eR);
