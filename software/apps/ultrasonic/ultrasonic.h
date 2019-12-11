@@ -2,7 +2,6 @@
 
 #include "nrf.h"
 
-float distF;
-float distB;
-float distL;
-float distR;
+float distF();
+float distB();
+float distR();
