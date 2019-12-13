@@ -67,17 +67,17 @@ float get_distance(uint8_t pin)
 	return RangeInCentimeters;
 }
 
-float distFront()
-{
-	return get_distance(4);
-}
-
-float distRight()
+float distF()
 {
 	return get_distance(2);
 }
 
-float distBack()
+float distR()
+{
+	return get_distance(4);
+}
+
+float distB()
 {
 	return get_distance(19);
 }

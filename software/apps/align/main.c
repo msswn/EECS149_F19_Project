@@ -34,41 +34,8 @@
 typedef enum
 {
     OFF,
-    CENTER
+    ALIGN
 } robot_state_t;
-
-// float lastDist;
-
-// static float measure_distance(uint16_t current_encoder, uint16_t previous_encoder, float dt)
-// {
-//   if (current_encoder < previous_encoder)
-//   {
-//     current_encoder += 2 ^ 16;
-//   }
-//   const float CONVERSION = 0.08529;
-//   float distance = CONVERSION * (current_encoder - previous_encoder);
-//   if (distance - lastDist > vel / dt * 1.25)
-//   {
-//     distance = lastDist;
-//   }
-//   return distance;
-// }
-
-// static float measure_distance_reverse(uint16_t current_encoder, uint16_t previous_encoder, float dt)
-// {
-//   if (current_encoder > previous_encoder)
-//   {
-//     previous_encoder += 2 ^ 16;
-//   }
-//   const float CONVERSION = 0.08529;
-//   float distance = fabs(CONVERSION * (previous_encoder - current_encoder));
-//   if (distance - lastDist > vel / dt * 1.25)
-//   {
-//     distance = lastDist;
-//   }
-//   lastDist = distance;
-//   return distance;
-// }
 
 int main(void)
 {
@@ -124,15 +91,11 @@ int main(void)
     robot_state_t state = OFF;
     KobukiSensors_t sensors = {0};
 
-    // Control gains
-    float Kp = 0.5f;
-
-    // Kobuki parameters
-    float l = 0.352;
-
-    float velOld;
+    float distOld;
+    float distD;
     float vel;
-    float distB;
+    float distR;
+    float e;
 
     // loop forever, running state machine
     while (1)
@@ -145,12 +108,6 @@ int main(void)
         //  in printf's in this loop breaking JTAG
         nrf_delay_ms(1);
 
-        float distBOld = distB;
-        float distF = distFront();
-        float distB = 0.5 * (distBack() + distBOld);
-        float distD = 0.5 * (distF + distB);
-        // Compute distance error
-        float e = distF - distB;
         // handle states
         switch (state)
         {
@@ -159,7 +116,8 @@ int main(void)
             // transition logic
             if (is_button_pressed(&sensors))
             {
-                state = CENTER;
+                state = ALIGN;
+                distD = distRight()-2;
             }
             else
             { // snprintf(buf2,16,"distDL:%.1f",distDL);
@@ -172,8 +130,10 @@ int main(void)
             break; // each case needs to end with break!
         }
 
-        case CENTER:
+        case ALIGN:
         {
+            distR = distRight();
+            e = distR-distD;
             // transition logic
             if (is_button_pressed(&sensors))
             {
@@ -186,20 +146,16 @@ int main(void)
             else
             {
                 // Compute input
-                vel = Kp * e * 10;
-                if (vel - velOld > 20)
-                {
-                    vel = velOld + 5;
-                }
+                float velL = 50 + 10*e;
+                float velR = 50 - 10*e;
                 char buf1[16];
                 char buf2[16];
                 snprintf(buf1, 16, "error: %f cm", e);
-                snprintf(buf2, 16, "F: %.0f, B: %.0f", distF, distB);
+                snprintf(buf2, 16, "dist: %.1f, distD: %.1f", distR, distD);
                 display_write(buf1, DISPLAY_LINE_0);
                 display_write(buf2, DISPLAY_LINE_1);
-                kobukiDriveDirect((int16_t)vel, (int16_t)vel);
-                velOld = vel;
-                state = CENTER;
+                kobukiDriveDirect((int16_t)velL, (int16_t)velR);
+                state = ALIGN;
             }
             break; // each case needs to end with break!
         }
