@@ -18,6 +18,7 @@
 #include "nrf_serial.h"
 
 #include "buckler.h"
+#include "virtual_timer.h"
 #include "gpio.h"
 
 uint32_t timeout = 1000000L;

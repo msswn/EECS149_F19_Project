@@ -1,6 +1,6 @@
-// Robot Template app
+// CSC Enhanced Program
 //
-// Framework for creating applications that control the Kobuki robot
+// Calculates and executes a Kobuki parallel parking algorithm
 
 #include <math.h>
 #include <stdbool.h>
@@ -25,11 +25,9 @@
 #include "kobukiSensorTypes.h"
 #include "kobukiUtilities.h"
 #include "mpu9250.h"
+#include "simple_ble.h"
 #include "virtual_timer.h"
 #include "ultrasonic.h"
-
-// I2C manager
-// NRF_TWI_MNGR_DEF(twi_mngr_instance, 5, 0);
 
 typedef enum
 {
@@ -41,25 +39,78 @@ typedef enum
   CENTER
 } robot_state_t;
 
-int16_t vel = 100;
+// Declare variables
+robot_state_t state;
+float vel;
+int16_t velL;
+int16_t velR;
+uint16_t start_encoder_L;
+uint16_t start_encoder_R;
+uint32_t timer_start;
+float curr_time;
+float last_time;
+float lasteL;
+float lasteR;
+float derivL;
+float derivR;
+int loop;
+float intErrorL;
+float intErrorR;
+float lastEncoderL;
+float lastEncoderR;
+float velOld;
+float wallDistFinal;
 float lastDist;
+KobukiSensors_t sensors;
+bool recalc = 0;
 float e;
 
-static float measure_distance_reverse(uint16_t current_encoder, uint16_t previous_encoder, float dt)
-{
-  if (current_encoder > previous_encoder)
-  {
-    previous_encoder += 2 ^ 16;
-  }
-  const float CONVERSION = 1 / 9.3;
-  float distance = fabs(CONVERSION * (previous_encoder - current_encoder));
-  if (distance - lastDist > vel / dt * 1.25)
-  {
-    distance = lastDist;
-  }
-  lastDist = distance;
-  return distance;
-}
+// Declare path planning variables
+float xf;
+float yf;
+float Rmin;
+float S;
+float H;
+float k;
+float m;
+float f1[2];
+float f2[2];
+float th1;
+float th2;
+float del[2];
+float magC1;
+float magS;
+float magC2;
+float t1;
+float t2;
+float t3;
+float xi;
+float yi;
+
+// Intervals for advertising and connections
+static simple_ble_config_t ble_config = {
+    // c0:98:e5:49:xx:xx
+    .platform_id = 0x49,    // used as 4th octect in device BLE address
+    .device_id = 0x0011,    // TODO: replace with your lab bench number
+    .adv_name = "Autopark", // used in advertisements if there is room
+    .adv_interval = MSEC_TO_UNITS(1000, UNIT_0_625_MS),
+    .min_conn_interval = MSEC_TO_UNITS(500, UNIT_1_25_MS),
+    .max_conn_interval = MSEC_TO_UNITS(1000, UNIT_1_25_MS),
+};
+
+// 32e61089-2b22-4db5-a914-43ce41986c70
+static simple_ble_service_t parking_service = {{.uuid128 = {0x70, 0x6C, 0x98, 0x41, 0xCE, 0x43, 0x14, 0xA9,
+                                                            0xB5, 0x4D, 0x22, 0x2B, 0x89, 0x10, 0xE6, 0x32}}};
+
+static simple_ble_char_t parking_state_char = {.uuid16 = 0x108a};
+static simple_ble_char_t x_init_char = {.uuid16 = 0x108b};
+static simple_ble_char_t y_init_char = {.uuid16 = 0x108c};
+static bool parking_state = true;
+char buf1BLE[16];
+char buf2BLE[16];
+
+// Main application state
+simple_ble_app_t *simple_ble_app;
 
 static float norm(float v[2])
 {
@@ -87,8 +138,129 @@ static float theta(float xc, float yc, float r, float xs, float ys, float xe, fl
   return the - ths;
 }
 
+void calc_path()
+{
+
+  // Kobuki offset
+  S = xi - xf;
+  H = yi - yf;
+
+  // Path calculation
+  k = (S * (H - 2 * Rmin) + sqrt(4 * pow(Rmin, 2) * (pow(S, 2) + pow(H, 2)) - 16 * pow(Rmin, 3) * H)) / (pow(S, 2) - 4 * pow(Rmin, 2));
+  m = Rmin * (1 - sqrt(1 + pow(k, 2))) + yf;
+  f1[0] = S - k / sqrt(1 + pow(k, 2)) * Rmin;
+  f1[1] = H - (1 - 1 / sqrt(1 + pow(k, 2))) * Rmin;
+  f1[0] += xf;
+  f1[1] += yf;
+  f2[0] = k / sqrt(1 + pow(k, 2)) * Rmin;
+  f2[1] = (1 - 1 / sqrt(1 + pow(k, 2))) * Rmin;
+  f2[0] += xf;
+  f2[1] += yf;
+
+  th1 = theta(S, H - Rmin, Rmin, S, H, f1[0], f1[1]);
+  // float th2 = theta(xf, yf+Rmin, Rmin, xf, yf, f2[0], f2[1]);
+  th2 = th1;
+  // printf("th1: %f, th2: %f\n", th1, th2);
+  del[0] = f1[0] - f2[0];
+  del[1] = f1[1] - f2[1];
+  magC1 = fabs(Rmin * th1);
+  magS = norm(del);
+  magC2 = fabs(Rmin * th2);
+  // printf("k: %f, m: %f, f1:[%f,%f], f2:[%f,%f] \nmagC1:%f, magS:%f, magC2:%f \n", k, m, f1[0], f1[1], f2[0], f2[1], magC1, magS, magC2);
+
+  // Deadlines to reach waypoint
+  t1 = magC1 * 1000 / vel;
+  t2 = magS * 1000 / vel;
+  t3 = magC2 * 1000 / vel;
+  printf("t1: %f,t2: %f, t3: %f\n", t1, t2, t3);
+}
+
+void ble_evt_write(ble_evt_t const *p_ble_evt)
+{
+  if (simple_ble_is_char_event(p_ble_evt, &parking_state_char))
+  {
+    if (state != OFF)
+    {
+      state = OFF;
+    }
+    else
+    {
+      state = C1;
+      start_encoder_L = sensors.leftWheelEncoder;
+      start_encoder_R = sensors.rightWheelEncoder;
+      timer_start = read_timer();
+      loop = 0;
+      derivL = 0;
+      derivR = 0;
+      intErrorL = 0;
+      intErrorR = 0;
+      lasteL = 0;
+      lasteR = 0;
+      last_time = 0;
+      lastDist = 0;
+      vel
+      lastEncoderL = sensors.leftWheelEncoder;
+      lastEncoderR = sensors.rightWheelEncoder;
+    }
+  }
+  if (simple_ble_is_char_event(p_ble_evt, &x_init_char))
+  {
+    xi = (float)atof(buf1BLE);
+    calc_path();
+    printf("xi: %f, yi: %f\n", xi, yi);
+  }
+  if (simple_ble_is_char_event(p_ble_evt, &y_init_char))
+  {
+    yi = (float)atof(buf2BLE);
+    calc_path();
+    printf("xi: %f, yi: %f\n", xi, yi);
+  }
+}
+
+static float measure_distance_reverse(uint16_t current_encoder, uint16_t previous_encoder, float dt)
+{
+  if (current_encoder > previous_encoder)
+  {
+    previous_encoder += 2 ^ 16;
+  }
+  const float CONVERSION = 1 / 9.3;
+  float distance = fabs(CONVERSION * (previous_encoder - current_encoder));
+  if (distance - lastDist > vel / dt * 1.25)
+  {
+    distance = lastDist;
+  }
+  lastDist = distance;
+  return distance;
+}
+
 int main(void)
 {
+  // Define problem constants
+  // Kobuki specs
+  float l = 0.352;
+  float w = 0.230;
+  Rmin = l / tan(50 * M_PI / 180);
+  float d1 = l / 2 + 0.01;
+  vel = 100;
+
+  // Outer and inner velocity ratio
+  float velO = vel * (Rmin + w / 3.0f) / Rmin;
+  float velI = vel * (Rmin - w / 3.0f) / Rmin;
+
+  // Parking spot parameters
+  float spotLength = l + 3.0f * d1;
+  float spotCenter[2] = {0, 0};
+  float spotBack = spotCenter[0] - spotLength * 0.5;
+
+  // Desired final position
+  xf = spotBack + d1;
+  yf = 0;
+
+  // Initial initial position
+  xi = 0.5;
+  yi = 0.5;
+  calc_path();
+
   ret_code_t error_code = NRF_SUCCESS;
 
   // initialize RTT library
@@ -97,6 +269,8 @@ int main(void)
   NRF_LOG_DEFAULT_BACKENDS_INIT();
   printf("Log initialized!\n");
 
+  printf("t1: %f,t2: %f, t3: %f\n", t1, t2, t3);
+
   // initialize LEDs
   nrf_gpio_pin_dir_set(23, NRF_GPIO_PIN_DIR_OUTPUT);
   nrf_gpio_pin_dir_set(24, NRF_GPIO_PIN_DIR_OUTPUT);
@@ -104,6 +278,26 @@ int main(void)
 
   // initialize timer library
   virtual_timer_init();
+
+  // Setup BLE
+  simple_ble_app = simple_ble_init(&ble_config);
+
+  simple_ble_add_service(&parking_service);
+
+  simple_ble_add_characteristic(1, 1, 0, 0,
+                                sizeof(parking_state), (uint8_t *)&parking_state,
+                                &parking_service, &parking_state_char);
+
+  simple_ble_add_characteristic(1, 1, 0, 0,
+                                sizeof(buf1BLE), (char *)&buf1BLE,
+                                &parking_service, &x_init_char);
+
+  simple_ble_add_characteristic(1, 1, 0, 0,
+                                sizeof(buf2BLE), (char *)&buf2BLE,
+                                &parking_service, &y_init_char);
+
+  // Start Advertising
+  simple_ble_adv_only_name();
 
   // initialize display
   nrf_drv_spi_t spi_instance = NRF_DRV_SPI_INSTANCE(1);
@@ -124,10 +318,10 @@ int main(void)
   printf("Display initialized!\n");
 
   // initialize i2c master (two wire interface)
-  nrf_drv_twi_config_t i2c_config = NRF_DRV_TWI_DEFAULT_CONFIG;
-  i2c_config.scl = BUCKLER_SENSORS_SCL;
-  i2c_config.sda = BUCKLER_SENSORS_SDA;
-  i2c_config.frequency = NRF_TWIM_FREQ_100K;
+  // nrf_drv_twi_config_t i2c_config = NRF_DRV_TWI_DEFAULT_CONFIG;
+  // i2c_config.scl = BUCKLER_SENSORS_SCL;
+  // i2c_config.sda = BUCKLER_SENSORS_SDA;
+  // i2c_config.frequency = NRF_TWIM_FREQ_100K;
   // error_code = nrf_twi_mngr_init(&twi_mngr_instance, &i2c_config);
   // APP_ERROR_CHECK(error_code);
   // mpu9250_init(&twi_mngr_instance);
@@ -138,7 +332,7 @@ int main(void)
   printf("Kobuki initialized!\n");
 
   // configure initial state
-  robot_state_t state = OFF;
+  state = OFF;
   KobukiSensors_t sensors = {0};
 
   // Control parameters
@@ -148,80 +342,6 @@ int main(void)
   float KdR = 0.5;
   float Kw = 1;
   float Ki = 0.5;
-
-  int16_t velL;
-  int16_t velR;
-  uint16_t start_encoder_L;
-  uint16_t start_encoder_R;
-  uint32_t timer_start;
-  float curr_time;
-  float last_time;
-  float lasteL;
-  float lasteR;
-  float derivL;
-  float derivR;
-  int loop;
-  float intErrorL;
-  float intErrorR;
-  float lastEncoderL;
-  float lastEncoderR;
-  float velOld;
-  float wallDistFinal;
-
-  // Kobuki specs
-  float l = 0.352;
-  float w = 0.230;
-  float Rmin = l / tan(50 * M_PI / 180);
-  float d1 = l / 2 + 0.01;
-  // Outer and inner velocity ratio
-  float velO = vel * (Rmin + w / 3.0f) / Rmin;
-  float velI = vel * (Rmin - w / 3.0f) / Rmin;
-
-  // Parking spot parameters
-  float spotLength = l + 3.0f * d1;
-  float spotWidth = l * 1.25;
-  float spotCenter[2] = {0, 0};
-  float spotBack = spotCenter[0] - spotLength * 0.5;
-  // float spotFront = spotCenter[0] + spotLength * 0.5;
-  // float spotRight = spotCenter[1] - 0.5 * spotWidth;
-
-  // Initial Kobuki position
-  float xi = 0.5;
-  float yi = 0.5;
-
-  // Desired final position
-  float xf = spotBack + d1;
-  float yf = 0;
-
-  // Kobuki offset
-  float S = xi - xf;
-  float H = yi - yf;
-
-  // Path calculation
-  float k = (S * (H - 2 * Rmin) + sqrt(4 * pow(Rmin, 2) * (pow(S, 2) + pow(H, 2)) - 16 * pow(Rmin, 3) * H)) / (pow(S, 2) - 4 * pow(Rmin, 2));
-  float m = Rmin * (1 - sqrt(1 + pow(k, 2))) + yf;
-  float f1[2] = {S - k / sqrt(1 + pow(k, 2)) * Rmin, H - (1 - 1 / sqrt(1 + pow(k, 2))) * Rmin};
-  f1[0] += xf;
-  f1[1] += yf;
-  float f2[2] = {k / sqrt(1 + pow(k, 2)) * Rmin, (1 - 1 / sqrt(1 + pow(k, 2))) * Rmin};
-  f2[0] += xf;
-  f2[1] += yf;
-
-  float th1 = theta(S, H - Rmin, Rmin, S, H, f1[0], f1[1]);
-  // float th2 = theta(xf, yf+Rmin, Rmin, xf, yf, f2[0], f2[1]);
-  float th2 = th1;
-  printf("th1: %f, th2: %f\n", th1, th2);
-  float del[2] = {f1[0] - f2[0], f1[1] - f2[1]};
-  float magC1 = fabs(Rmin * th1);
-  float magS = norm(del);
-  float magC2 = fabs(Rmin * th2);
-  printf("k: %f, m: %f, f1:[%f,%f], f2:[%f,%f] \nmagC1:%f, magS:%f, magC2:%f \n", k, m, f1[0], f1[1], f2[0], f2[1], magC1, magS, magC2);
-
-  // Deadlines to reach waypoint
-  float t1 = magC1 * 1000 / vel;
-  float t2 = magS * 1000 / vel;
-  float t3 = magC2 * 1000 / vel;
-  printf("t1: %f,t2: %f, t3: %f", t1, t2, t3);
 
   // loop forever, running state machine
   while (1)
@@ -320,7 +440,7 @@ int main(void)
         // Compute left and right velocity error
         float eL = velO - velActualL;
         float eR = velI - velActualR;
-        printf("%f,%f\n", eL, eR);
+        // printf("%f,%f\n", eL, eR);
 
         // Compute derivative term
         float curr_derivative_L = (eL - lasteL) / dt;
@@ -343,7 +463,7 @@ int main(void)
 
         // Compute input
         velL = (int16_t)-velO - 0.1 * eL - 0.1 * edL - 0.1 * intErrorL;
-        velR = (int16_t)-velI - 0.4 * eR - 0.1 * edR - 0.1 * intErrorL;
+        velR = (int16_t)-velI - 0.1 * eR - 0.1 * edR - 0.1 * intErrorL;
         // velL = (int16_t) -velO;
         // velR = (int16_t) -velI;
         char buf1[16];
@@ -450,7 +570,7 @@ int main(void)
       else if (curr_time >= t3 || distBack() < 3)
       {
         state = ALIGN;
-        wallDistFinal = distRight()-2.0f;
+        wallDistFinal = distRight() - 2.0f;
       }
       else
       {
@@ -549,8 +669,7 @@ int main(void)
     {
       float distF = distFront();
       float distB = distBack();
-      float distD = 0.5 * (distF + distB);
-      float e = distF - distB;
+      e = distF - distB;
       // transition logic
       if (is_button_pressed(&sensors))
       {
