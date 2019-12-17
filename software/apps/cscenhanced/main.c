@@ -42,8 +42,6 @@ typedef enum
 // Declare variables
 robot_state_t state;
 float vel;
-int16_t velL;
-int16_t velR;
 uint16_t start_encoder_L;
 uint16_t start_encoder_R;
 uint32_t timer_start;
@@ -61,9 +59,8 @@ float lastEncoderR;
 float velOld;
 float wallDistFinal;
 float lastDist;
-KobukiSensors_t sensors;
-bool recalc = 0;
 float e;
+float distprev;
 
 // Declare path planning variables
 float xf;
@@ -86,6 +83,8 @@ float t2;
 float t3;
 float xi;
 float yi;
+
+bool flag = 0;
 
 // Intervals for advertising and connections
 static simple_ble_config_t ble_config = {
@@ -182,25 +181,9 @@ void ble_evt_write(ble_evt_t const *p_ble_evt)
     if (state != OFF)
     {
       state = OFF;
-    }
-    else
+    } else
     {
-      state = C1;
-      start_encoder_L = sensors.leftWheelEncoder;
-      start_encoder_R = sensors.rightWheelEncoder;
-      timer_start = read_timer();
-      loop = 0;
-      derivL = 0;
-      derivR = 0;
-      intErrorL = 0;
-      intErrorR = 0;
-      lasteL = 0;
-      lasteR = 0;
-      last_time = 0;
-      lastDist = 0;
-      vel
-      lastEncoderL = sensors.leftWheelEncoder;
-      lastEncoderR = sensors.rightWheelEncoder;
+      flag = 1;
     }
   }
   if (simple_ble_is_char_event(p_ble_evt, &x_init_char))
@@ -268,13 +251,6 @@ int main(void)
   APP_ERROR_CHECK(error_code);
   NRF_LOG_DEFAULT_BACKENDS_INIT();
   printf("Log initialized!\n");
-
-  printf("t1: %f,t2: %f, t3: %f\n", t1, t2, t3);
-
-  // initialize LEDs
-  nrf_gpio_pin_dir_set(23, NRF_GPIO_PIN_DIR_OUTPUT);
-  nrf_gpio_pin_dir_set(24, NRF_GPIO_PIN_DIR_OUTPUT);
-  nrf_gpio_pin_dir_set(25, NRF_GPIO_PIN_DIR_OUTPUT);
 
   // initialize timer library
   virtual_timer_init();
@@ -352,7 +328,7 @@ int main(void)
     // delay before continuing
     // Note: removing this delay will make responses quicker, but will result
     //  in printf's in this loop breaking JTAG
-    nrf_delay_ms(1);
+    // nrf_delay_ms(1);
 
     // handle states
     switch (state)
@@ -360,8 +336,9 @@ int main(void)
     case OFF:
     {
       // transition logic
-      if (is_button_pressed(&sensors))
+      if (is_button_pressed(&sensors) || flag)
       {
+        flag = 0;
         state = C1;
         start_encoder_L = sensors.leftWheelEncoder;
         start_encoder_R = sensors.rightWheelEncoder;
@@ -382,7 +359,9 @@ int main(void)
       {
         // perform state-specific actions here
         display_write("OFF", DISPLAY_LINE_0);
-        display_write(" ", DISPLAY_LINE_1);
+        char buf2[16];
+        snprintf(buf2,16,"xi:%.1f, yi:%.1f",xi,yi);
+        display_write(buf2, DISPLAY_LINE_1);
         kobukiDriveDirect(0, 0);
         state = OFF;
       }
@@ -462,8 +441,8 @@ int main(void)
         last_time = curr_time;
 
         // Compute input
-        velL = (int16_t)-velO - 0.1 * eL - 0.1 * edL - 0.1 * intErrorL;
-        velR = (int16_t)-velI - 0.1 * eR - 0.1 * edR - 0.1 * intErrorL;
+        int16_t velL = (int16_t)-velO - 0.1 * eL - 0.1 * edL - 0.1 * intErrorL;
+        int16_t velR = (int16_t)-velI - 0.1 * eR - 0.1 * edR - 0.1 * intErrorL;
         // velL = (int16_t) -velO;
         // velR = (int16_t) -velI;
         char buf1[16];
@@ -541,8 +520,8 @@ int main(void)
         last_time = curr_time;
 
         // Compute input
-        velL = (int16_t)-vel - KL * eL - KdL * edL - Ki * intErrorL;
-        velR = (int16_t)-vel - KR * eR - KdR * edR - Ki * intErrorR;
+        int16_t velL = (int16_t)-vel - KL * eL - KdL * edL - Ki * intErrorL;
+        int16_t velR = (int16_t)-vel - KR * eR - KdR * edR - Ki * intErrorR;
         char buf1[16];
         // char buf2[16];
         snprintf(buf1, 16, "L:%.1f,R:%.1f", eL, eR);
@@ -567,10 +546,11 @@ int main(void)
       {
         state = OFF;
       }
-      else if (curr_time >= t3 || distBack() < 3)
+      else if (curr_time >= t3 || distBack() < 2)
       {
         state = ALIGN;
-        wallDistFinal = distRight() - 2.0f;
+        distprev = distRight();
+        timer_start = read_timer();
       }
       else
       {
@@ -606,8 +586,8 @@ int main(void)
         last_time = curr_time;
 
         // Compute input
-        velL = (int16_t)-velI - KL * eL - KdL * edL - Ki * intErrorL;
-        velR = (int16_t)-velO - KR * eR - KdR * edR - Ki * intErrorR;
+        int16_t velL = (int16_t)-velI - KL * eL - KdL * edL - Ki * intErrorL;
+        int16_t velR = (int16_t)-velO - KR * eR - KdR * edR - Ki * intErrorR;
         char buf1[16];
         // char buf2[16];
         snprintf(buf1, 16, "L:%.1f,R:%.1f", eL, eR);
@@ -631,20 +611,20 @@ int main(void)
     {
       // transition logic
       float distWall = distRight();
-      e = distWall - wallDistFinal;
+      e = distWall - distprev;
       if (is_button_pressed(&sensors))
       {
         state = OFF;
       }
-      else if (-1.0f < e && e < 1.0f)
+      else if (-0.5f < e && e < 0.5f && (read_timer() - timer_start) > 5000000)
       {
         state = CENTER;
         velOld = 0;
       }
       else
       {
-        velL = 50 + 10 * e;
-        velR = 50 - 10 * e;
+        int16_t velL = 50 + 10 * e;
+        int16_t velR = 50 - 10 * e;
         if (velL > 50 * (Rmin + w / 3.5f) / Rmin)
         {
           velL = 50 * (Rmin + w / 3.5f) / Rmin;

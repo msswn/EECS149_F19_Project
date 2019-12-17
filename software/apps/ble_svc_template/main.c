@@ -19,7 +19,7 @@
 static simple_ble_config_t ble_config = {
         // c0:98:e5:49:xx:xx
         .platform_id       = 0x49,    // used as 4th octect in device BLE address
-        .device_id         = 0x0000, // TODO: replace with your lab bench number
+        .device_id         = 0x0011, // TODO: replace with your lab bench number
         .adv_name          = "EE149 LED", // used in advertisements if there is room
         .adv_interval      = MSEC_TO_UNITS(1000, UNIT_0_625_MS),
         .min_conn_interval = MSEC_TO_UNITS(500, UNIT_1_25_MS),
@@ -34,6 +34,7 @@ static simple_ble_service_t led_service = {{
 
 static simple_ble_char_t led_state_char = {.uuid16 = 0x108a};
 static bool led_state = true;
+char buf[16];
 
 /*******************************************************************************
  *   State for this application
@@ -43,14 +44,16 @@ simple_ble_app_t* simple_ble_app;
 
 void ble_evt_write(ble_evt_t const* p_ble_evt) {
     if (simple_ble_is_char_event(p_ble_evt, &led_state_char)) {
-      printf("Got write to LED characteristic!\n");
-      if (led_state) {
-        printf("Turning on LED!\n");
-        nrf_gpio_pin_clear(BUCKLER_LED0);
-      } else {
-        printf("Turning off LED!\n");
-        nrf_gpio_pin_set(BUCKLER_LED0);
-      }
+      // printf("Got write to LED characteristic!\n");
+      // if (led_state) {
+      //   printf("Turning on LED!\n");
+      //   nrf_gpio_pin_clear(BUCKLER_LED0);
+      // } else {
+      //   printf("Turning off LED!\n");
+      //   nrf_gpio_pin_set(BUCKLER_LED0);
+      // }
+      // snprintf(buf,16,"%f","testing");
+      display_write(buf, DISPLAY_LINE_1);
     }
 }
 
@@ -86,8 +89,12 @@ int main(void) {
 
   simple_ble_add_service(&led_service);
 
+  // simple_ble_add_characteristic(1, 1, 0, 0,
+  //     sizeof(led_state), (uint8_t*)&led_state,
+  //     &led_service, &led_state_char);
+
   simple_ble_add_characteristic(1, 1, 0, 0,
-      sizeof(led_state), (uint8_t*)&led_state,
+      sizeof(buf), (char*)&buf,
       &led_service, &led_state_char);
 
   // Start Advertising

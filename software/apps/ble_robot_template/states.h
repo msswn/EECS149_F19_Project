@@ -11,7 +11,11 @@
 #include <stdio.h>
 
 typedef enum {
-    OFF=0,
+    OFF,
+    FORWARD,
+    BACKWARD, 
+    LEFT, 
+    RIGHT,
 } states;
 
 #endif /* STATES_H_ */
