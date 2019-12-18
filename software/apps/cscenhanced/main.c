@@ -190,13 +190,13 @@ void ble_evt_write(ble_evt_t const *p_ble_evt)
   {
     xi = (float)atof(buf1BLE);
     calc_path();
-    printf("xi: %f, yi: %f\n", xi, yi);
+    // printf("xi: %f, yi: %f\n", xi, yi);
   }
   if (simple_ble_is_char_event(p_ble_evt, &y_init_char))
   {
     yi = (float)atof(buf2BLE);
     calc_path();
-    printf("xi: %f, yi: %f\n", xi, yi);
+    // printf("xi: %f, yi: %f\n", xi, yi);
   }
 }
 
@@ -206,7 +206,7 @@ static float measure_distance_reverse(uint16_t current_encoder, uint16_t previou
   {
     previous_encoder += 2 ^ 16;
   }
-  const float CONVERSION = 1 / 9.3;
+  const float CONVERSION = 1 / 9.5;
   float distance = fabs(CONVERSION * (previous_encoder - current_encoder));
   if (distance - lastDist > vel / dt * 1.25)
   {
@@ -358,9 +358,12 @@ int main(void)
       else
       {
         // perform state-specific actions here
-        display_write("OFF", DISPLAY_LINE_0);
+        // display_write("OFF", DISPLAY_LINE_0);
+        char buf1[16];
         char buf2[16];
+        snprintf(buf1,16,"t1:%.2f,t2:%.2f",t1,t2);
         snprintf(buf2,16,"xi:%.1f, yi:%.1f",xi,yi);
+        display_write(buf1,DISPLAY_LINE_0);
         display_write(buf2, DISPLAY_LINE_1);
         kobukiDriveDirect(0, 0);
         state = OFF;
@@ -662,10 +665,10 @@ int main(void)
       else
       {
         // Compute input
-        vel = 0.7f * e * 10;
-        if (vel - velOld > 20)
+        float v = 0.7f * e * 10;
+        if (v - velOld > 20)
         {
-          vel = velOld + 5;
+          v = velOld + 5;
         }
         // char buf1[16];
         char buf2[16];
@@ -674,7 +677,7 @@ int main(void)
         display_write("CENTER", DISPLAY_LINE_0);
         display_write(buf2, DISPLAY_LINE_1);
         kobukiDriveDirect((int16_t)vel, (int16_t)vel);
-        velOld = vel;
+        velOld = v;
         state = CENTER;
       }
       break; // each case needs to end with break!
