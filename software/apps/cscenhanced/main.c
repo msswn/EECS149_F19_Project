@@ -676,7 +676,7 @@ int main(void)
         snprintf(buf2, 16, "F: %.0f, B: %.0f", distF, distB);
         display_write("CENTER", DISPLAY_LINE_0);
         display_write(buf2, DISPLAY_LINE_1);
-        kobukiDriveDirect((int16_t)vel, (int16_t)vel);
+        kobukiDriveDirect((int16_t)v, (int16_t)v);
         velOld = v;
         state = CENTER;
       }
