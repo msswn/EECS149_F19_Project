@@ -17,7 +17,7 @@ f8 = [0,0];
 f9 = [0,0];
 
 % Parking spot parameters
-spotLength = l+3*d1;
+spotLength = l+2.4*d1;
 spotWidth = l*1.25;
 spotCenter = [0 0];
 spotBack = spotCenter(1)-spotLength/2;
@@ -28,13 +28,13 @@ rect(spotLength,spotWidth,spotCenter);
 hold on
 
 % Initial position
-xi = 1;
+xi = 0.5;
 yi = 0.5;
 plot(xi,yi,'.','MarkerSize',20)
 circleFull(xi,yi,l/2)
 
 % Final position
-xf = spotBack + l/2;
+xf = spotBack;
 yf = 0;
 
 % Initial position offset
@@ -50,18 +50,15 @@ f1 = f1 + [xf,yf];
 % Plot C1
 circle(S+xf,H-Rmin+yf,Rmin,S+xf,H+yf,f1(1),f1(2));
 plot(f1(1),f1(2),'.','MarkerSize',20)
-magC1 = Rmin * th(S, H-Rmin, Rmin, S, H, f1(1), f1(2));
 
 % Calculate tangent point 2
 f2 = [k/sqrt(1+k^2)*Rmin, (1-1/sqrt(1+k^2))*Rmin];
 f2 = f2 + [xf,yf];
-magC2 = Rmin * th(0, Rmin, Rmin, 0, 0, f2(1), f2(2));
 
 % Check if S exceeds bounds
 if f2(1) < spotBack + d1
     % Vehicle stops before collision
     f2 = [spotBack + d1, k*(spotBack+d1-xf) + m + yf];
-    magSEG = norm(f2-f1);
     plot(f2(1),f2(2),'.','MarkerSize',20)
     circleFull(f2(1),f2(2),l/2)
     f = [f1; f2];
@@ -78,7 +75,6 @@ if f2(1) < spotBack + d1
     cy = Rmin*dSn(2) + f2(2);
     f5 = [cx cy] + [-(f2(1)-cx) f2(2)-cy];
     circle(cx, cy, Rmin,f2(1),f2(2),f5(1),f5(2));
-    magC3 = Rmin*th(cx,cy,Rmin,f5(1),f5(2),f2(1),f2(2));
 else
     f = [f1; f2];
     
@@ -145,9 +141,9 @@ else
     cx = f6xd;
     cy = Rmin;
     plot(f6(1),f6(2),'.','MarkerSize',20)
+    plot(f6(1),f6(2),'.','MarkerSize',20)
     circle(cx, cy, Rmin,f5(1),f5(2),f6(1),f6(2));
     circleFull(f6(1),f6(2),l/2);
-    magC4 = Rmin * th(cx,cy,Rmin,f5(1),f5(2),f6(1),f6(2));
     f9 = spotCenter;
     plot([f6(1) f9(1)], [f6(2) f9(2)],'k')
     plot(f9(1),f9(2),'.','MarkerSize',20)
