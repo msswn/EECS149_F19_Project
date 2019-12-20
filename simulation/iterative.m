@@ -17,7 +17,7 @@ f8 = [0,0];
 f9 = [0,0];
 
 % Parking spot parameters
-spotLength = l+2.4*d1;
+spotLength = l+2.6*d1;
 spotWidth = l*1.25;
 spotCenter = [0 0];
 spotBack = spotCenter(1)-spotLength/2;
@@ -149,5 +149,8 @@ else
     plot(f9(1),f9(2),'.','MarkerSize',20)
     circleFull(f9(1),f9(2),l/2);
 end
+
+title(['x_i = ',num2str(xi),', y_i = ',num2str(yi)])
+% set(gca,'FontName','SF Pro Text','FontSize',5)
 
 [f1; f2; f4; f5; f6; f7; f8; f9]

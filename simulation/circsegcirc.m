@@ -7,7 +7,7 @@ Rmin = l/tan(50*pi/180);
 d1 = l/2+0.01;
 
 % Parking spot parameters
-spotLength = l+3*d1;
+spotLength = l+2.5*d1;
 spotWidth = l*1.25;
 spotCenter = [0 0];
 spotBack = spotCenter(1)-spotLength/2;
@@ -19,7 +19,7 @@ hold on
 
 % Initial position
 xi = 0.5;
-yi = 0.6;
+yi = 0.5;
 plot(xi,yi,'.','MarkerSize',20)
 circleFull(xi,yi,l/2)
 
@@ -78,3 +78,5 @@ t3 = magC2*1000/vel;
 t1
 t2
 t3
+
+title(['x_i = ',num2str(xi),', y_i = ',num2str(yi)])
